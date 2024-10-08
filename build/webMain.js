@@ -45,7 +45,7 @@
         NodeType["Container"] = "Container";
         NodeType["AudioSpeech"] = "AudioSpeech";
         NodeType["VisualText"] = "VisualText";
-        // VideoFile = 'VideoFile',
+        NodeType["VideoFile"] = "VideoFile";
     })(NodeType || (NodeType = {}));
     function deserializeToNode(json) {
         switch (json.commonNodeAttr.nodeType) {
@@ -55,6 +55,8 @@
                 return AudioSpeechNode.deserialize(json);
             case NodeType.VisualText:
                 return VisualTextNode.deserialize(json);
+            case NodeType.VideoFile:
+                return VideoFileNode.deserialize(json);
         }
         throw 'Forgot to implement deserializeToNode case: ' + json.commonNodeAttr.nodeType;
     }
@@ -127,12 +129,14 @@
         }
     }
     class VideoFileNode {
-        constructor(commonNodeAttr = new CommonNodeAttr(NodeType.VisualText), filePath = 'data/matchplay.mov') {
+        constructor(commonNodeAttr = new CommonNodeAttr(NodeType.VideoFile), filePath = 'data/matchplay.mov', startMs = 0, playbackRate = 1) {
             this.commonNodeAttr = commonNodeAttr;
             this.filePath = filePath;
+            this.startMs = startMs;
+            this.playbackRate = playbackRate;
         }
         static deserialize(json) {
-            return new VisualTextNode(CommonNodeAttr.deserialize(json.commonNodeAttr), json.filePath);
+            return new VideoFileNode(CommonNodeAttr.deserialize(json.commonNodeAttr), json.filePath, json.startMs, json.playbackRate);
         }
     }
 
@@ -165,6 +169,7 @@
             startInfo.nodes = nodes.filter(node => {
                 return node.commonNodeAttr.startMs <= timeMs && timeMs < node.commonNodeAttr.endMs;
             });
+            startInfo.nodes.sort((node1, node2) => node1.commonNodeAttr.trackIdx - node2.commonNodeAttr.trackIdx);
         });
         return startInfos;
     }
@@ -174,29 +179,71 @@
             this.startInfos = startInfos;
             this.startInfoIdx = startInfoIdx;
         }
-        setup(container) {
+        setup(container, startMs = 0) {
             this.startInfoIdx = -1;
-            const nodes = container.getNestedNodes();
-            const textNodes = nodes.filter(node => {
-                return node instanceof VisualTextNode;
+            this.startInfos.forEach((startInfo, idx) => {
+                if (startInfo.startMs < startMs) {
+                    this.startInfoIdx = idx;
+                }
             });
-            this.startInfos = computeOneTimeStartInfos(textNodes);
+            const nodes = container.getNestedNodes();
+            const drawableNodes = nodes.filter(node => {
+                return (node instanceof VisualTextNode) || (node instanceof VideoFileNode);
+            });
+            this.startInfos = computeOneTimeStartInfos(drawableNodes);
         }
-        draw(timeMs, ctx) {
+        draw(timeMs, ctx, pathToVideoHtml) {
             const nextStartInfo = this.startInfos[this.startInfoIdx + 1];
-            if (nextStartInfo && nextStartInfo.startMs <= timeMs) {
+            const transitioning = nextStartInfo && nextStartInfo.startMs <= timeMs;
+            if (transitioning) {
                 this.startInfoIdx += 1;
+                // Stop the relevant videoHtmls
+                const prevStartInfo = this.startInfos[this.startInfoIdx - 1];
+                if (prevStartInfo) {
+                    prevStartInfo.nodes.forEach(node => {
+                        if (node instanceof VideoFileNode) {
+                            const videoHtml = pathToVideoHtml.get(node.filePath);
+                            if (videoHtml && !videoHtml.paused) {
+                                videoHtml.pause();
+                            }
+                        }
+                    });
+                }
             }
             const currStartInfo = this.startInfos[this.startInfoIdx];
             if (!currStartInfo) {
                 return;
             }
             currStartInfo.nodes.forEach(node => {
-                ctx.font = '48px serif';
-                ctx.textBaseline = 'top';
-                ctx.fillText(node.text, 0, 0);
+                if (node instanceof VisualTextNode) {
+                    ctx.font = '48px serif';
+                    ctx.textBaseline = 'top';
+                    ctx.fillText(node.text, 0, 0);
+                }
+                else if (node instanceof VideoFileNode) {
+                    // 1. Start the relevant videoHtmls
+                    const videoHtml = pathToVideoHtml.get(node.filePath);
+                    if (!videoHtml) {
+                        throw `Unable to find video html for file: ${node.filePath}`;
+                    }
+                    if (videoHtml.paused) {
+                        const initialOffsetMs = timeMs - node.commonNodeAttr.startMs;
+                        videoHtml.currentTime = (initialOffsetMs + node.startMs) / 1000;
+                        videoHtml.play();
+                    }
+                    // 2. Extract the relevant images from the relevant videoHtmls into ctx.
+                    const drawImageArgs = computeDrawImageArgs(videoHtml);
+                    ctx.drawImage(videoHtml, ...drawImageArgs);
+                }
             });
         }
+    }
+    function computeDrawImageArgs(videoHtml) {
+        const destWidth = videoHtml.videoWidth;
+        const destHeight = videoHtml.videoHeight;
+        const srcWidth = videoHtml.videoWidth;
+        const srcHeight = videoHtml.videoHeight;
+        return [0, 0, srcWidth, srcHeight, 0, 0, destWidth, destHeight];
     }
 
     class Talker {
@@ -204,8 +251,13 @@
             this.startInfos = startInfos;
             this.startInfoIdx = startInfoIdx;
         }
-        setup(container) {
+        setup(container, startMs = 0) {
             this.startInfoIdx = -1;
+            this.startInfos.forEach((startInfo, idx) => {
+                if (startInfo.startMs < startMs) {
+                    this.startInfoIdx = idx;
+                }
+            });
             const nodes = container.getNestedNodes();
             const textNodes = nodes.filter(node => {
                 return node instanceof AudioSpeechNode;
@@ -247,32 +299,32 @@
             if (editor.cursor.timeMs + this.msPerFrame >= container.commonNodeAttr.endMs) {
                 startMs = 0;
             }
-            this.play(container, startMs);
+            this.play(editor, startMs);
         }
-        play(container, startMs = 0) {
+        play(editor, startMs = 0) {
             if (this.isPlaying) {
                 return;
             }
             this.isPlaying = true;
             this.timeMs = startMs;
-            this.drawer.setup(container);
-            this.talker.setup(container);
-            this.animateRecursively(container.commonNodeAttr.endMs);
-            // TODO
+            const container = editor.getOpenedContainer();
+            this.drawer.setup(container, startMs);
+            this.talker.setup(container, startMs);
+            this.animateRecursively(editor.unpersisted.pathToVideoHtml, container.commonNodeAttr.endMs);
         }
         pause() {
             this.isPlaying = false;
             window.clearTimeout(this.animateTimeoutId);
+            window.speechSynthesis.cancel();
             this.onChangeCallback(this.timeMs);
         }
         onChange(callback) {
             this.onChangeCallback = callback;
         }
-        animateRecursively(endMs = 10000) {
+        animateRecursively(pathToVideoHtml, endMs = 10000) {
             const ctx = this.get2dContext();
             ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            // Should I have the drawer draw the video image also or a separate videoDrawer?
-            this.drawer.draw(this.timeMs, ctx);
+            this.drawer.draw(this.timeMs, ctx, pathToVideoHtml);
             this.talker.talk(this.timeMs);
             // TODO see if we need to disable this avoid jank.
             this.onChangeCallback(this.timeMs);
@@ -282,7 +334,7 @@
             }
             this.animateTimeoutId = window.setTimeout(() => {
                 this.timeMs = nextTimeMs;
-                this.animateRecursively(endMs);
+                this.animateRecursively(pathToVideoHtml, endMs);
             }, this.msPerFrame);
         }
         get2dContext() {
@@ -351,6 +403,20 @@
             this.getOpenedContainer().fixEndPoints();
             this.unpersisted.onChangeFunc();
         }
+        loadPathToVideoHtml() {
+            this.getOpenedContainer().getNestedNodes().forEach(node => {
+                if (node instanceof VideoFileNode) {
+                    if (!this.unpersisted.pathToVideoHtml.has(node.filePath)) {
+                        this.loadVideoHtmlForNode(node);
+                    }
+                }
+            });
+        }
+        pauseVideoHtmls() {
+            this.unpersisted.pathToVideoHtml.forEach((videoHtml) => {
+                videoHtml.pause();
+            });
+        }
         async handleEnter() {
             const res = prompt("Enter text for Audio Speech.");
             if (res === null) {
@@ -389,12 +455,15 @@
             node.commonNodeAttr.endMs = this.cursor.timeMs + 2000;
             this.getOpenedContainer().addNode(node);
             this.notify();
+            this.loadVideoHtmlForNode(node);
+        }
+        loadVideoHtmlForNode(node) {
             // editWindowUi would be a better place to have this but
             // we need this loaded here to get the durMs.
             const videoHtml = document.createElement('video');
             videoHtml.id = `video-file-node-video-html-${node.commonNodeAttr.idNum}`;
             videoHtml.src = node.filePath;
-            videoHtml.style.display = 'none';
+            // videoHtml.style.display = 'none';
             document.body.appendChild(videoHtml);
             this.unpersisted.pathToVideoHtml.set(node.filePath, videoHtml);
             videoHtml.onloadedmetadata = () => {
@@ -539,17 +608,15 @@
             return;
         }
         voices = window.speechSynthesis.getVoices().filter(voice => voice.localService && voice.lang === 'en-AU');
-        console.log(voices);
     }
 
     const editorsNamespace = 'editors';
     class EditorUi extends HTMLElement {
-        constructor(editor = new Editor, editWindowUi = new EditWindowUi(editor), director = new Director, pathToVideoHtml = new Map()) {
+        constructor(editor = new Editor, editWindowUi = new EditWindowUi(editor), director = new Director) {
             super();
             this.editor = editor;
             this.editWindowUi = editWindowUi;
             this.director = director;
-            this.pathToVideoHtml = pathToVideoHtml;
             this.root = this.attachShadow({ mode: "open" });
             this.director.canvas.style.border = 'solid 1px';
             this.director.canvas.width = 1280;
@@ -576,8 +643,9 @@
         }
         finishLoading() {
             this.editor.onChange(() => this.editWindowUi.render());
-            this.editor.unpersisted.pathToVideoHtml = this.pathToVideoHtml;
             this.editWindowUi.render();
+            // TODO see if this needs to happen via a user input instead of here.
+            this.editor.loadPathToVideoHtml();
             this.director.onChange((timeMs) => {
                 this.editor.setCursorTimeMs(timeMs);
             });
@@ -585,45 +653,89 @@
         handleKeydown(evt) {
             console.log(evt);
             initVoices();
-            switch (evt.key) {
-                case "Enter":
-                    if (evt.shiftKey) {
-                        this.editor.handleShiftEnter();
-                    }
-                    else {
-                        this.editor.handleEnter();
-                    }
-                    break;
-                case "s":
-                    if (isCmd(evt)) {
-                        this.save();
-                        break;
-                    }
-                case "o":
-                    this.editor.handleOpenFile();
-                case "ArrowLeft":
-                    this.editor.handleLeft();
-                    break;
-                case "ArrowRight":
-                    this.editor.handleRight();
-                    break;
-                case "ArrowUp":
-                    this.editor.handleUp();
-                    break;
-                case "ArrowDown":
-                    this.editor.handleDown();
-                    break;
-                case " ":
-                    this.director.togglePlayPause(this.editor);
-                default:
-                    return;
+            if (matchKey(evt, 'enter')) {
+                this.editor.handleEnter();
+            }
+            else if (matchKey(evt, 'shift+enter')) {
+                this.editor.handleShiftEnter();
+            }
+            else if (matchKey(evt, 'cmd+s')) {
+                this.save();
+            }
+            else if (matchKey(evt, 'o')) {
+                this.editor.handleOpenFile();
+            }
+            else if (matchKey(evt, 'left')) {
+                this.editor.handleLeft();
+            }
+            else if (matchKey(evt, 'right')) {
+                this.editor.handleRight();
+            }
+            else if (matchKey(evt, 'up')) {
+                this.editor.handleUp();
+            }
+            else if (matchKey(evt, 'down')) {
+                this.editor.handleDown();
+            }
+            else if (matchKey(evt, 'space')) {
+                this.editor.pauseVideoHtmls();
+                this.director.togglePlayPause(this.editor);
+            }
+            else if (matchKey(evt, 'backspace')) ;
+            else {
+                return;
             }
             evt.preventDefault();
         }
     }
-    function isCmd(evt) {
-        // TODO handle non-Mac
-        return evt.metaKey;
+    // E.g.: cmd+shift+enter or cmd+space
+    function matchKey(evt, wantStr = '') {
+        let evtKey = evt.key;
+        // Special cases
+        if (evtKey === ' ') {
+            evtKey = 'space';
+        }
+        else if (evtKey === 'ArrowRight') {
+            evtKey = 'right';
+        }
+        else if (evtKey === 'ArrowUp') {
+            evtKey = 'up';
+        }
+        else if (evtKey === 'ArrowDown') {
+            evtKey = 'down';
+        }
+        else if (evtKey === 'ArrowLeft') {
+            evtKey = 'left';
+        }
+        evtKey = evtKey.toLowerCase();
+        const wantProps = wantStr.split('+');
+        if (wantProps.length === 0) {
+            return false;
+        }
+        const wantKey = wantProps.pop()?.toLowerCase();
+        if (evtKey !== wantKey) {
+            return false;
+        }
+        const evtProps = new Set();
+        if (evt.metaKey) {
+            evtProps.add('cmd' );
+        }
+        if (evt.altKey) {
+            evtProps.add('alt');
+        }
+        if (evt.shiftKey) {
+            evtProps.add('shift');
+        }
+        if (evt.ctrlKey) {
+            evtProps.add('ctrl' );
+        }
+        if (evtProps.size != wantProps.length) {
+            return false;
+        }
+        if (wantProps.some(wantProp => !evtProps.has(wantProp))) {
+            return false;
+        }
+        return true;
     }
     customElements.define('editor-ui', EditorUi);
 

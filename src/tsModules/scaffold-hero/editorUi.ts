@@ -11,7 +11,6 @@ export class EditorUi extends HTMLElement {
     public editor: Editor = new Editor,
     public editWindowUi: EditWindowUi = new EditWindowUi(editor),
     public director: Director = new Director,
-    public pathToVideoHtml: Map<string, HTMLVideoElement> = new Map(),
   ) {
     super();
     this.root = this.attachShadow({ mode: "open" });
@@ -44,8 +43,9 @@ export class EditorUi extends HTMLElement {
 
   finishLoading() {
     this.editor.onChange(() => this.editWindowUi.render());
-    this.editor.unpersisted.pathToVideoHtml = this.pathToVideoHtml;
     this.editWindowUi.render();
+    // TODO see if this needs to happen via a user input instead of here.
+    this.editor.loadPathToVideoHtml();
 
     this.director.onChange((timeMs: number) => {
       this.editor.setCursorTimeMs(timeMs);
@@ -56,45 +56,84 @@ export class EditorUi extends HTMLElement {
   handleKeydown(evt: KeyboardEvent) {
     console.log(evt);
     initVoices();
-    switch (evt.key) {
-      case "Enter":
-        if (evt.shiftKey) {
-          this.editor.handleShiftEnter();
-        } else {
-          this.editor.handleEnter();
-        }
-        break;
-      case "s":
-        if (isCmd(evt)) {
-          this.save();
-          break;
-        }
-      case "o":
-        this.editor.handleOpenFile();
-      case "ArrowLeft":
-        this.editor.handleLeft();
-        break;
-      case "ArrowRight":
-        this.editor.handleRight();
-        break;
-      case "ArrowUp":
+      if (matchKey(evt, 'enter')) {
+        this.editor.handleEnter();
+      } else if (matchKey(evt, 'shift+enter')) {
+        this.editor.handleShiftEnter();
+      } else if (matchKey(evt, 'cmd+s')) {
+        this.save();
+      } else if (matchKey(evt, 'o')) {
+          this.editor.handleOpenFile();
+      } else if (matchKey(evt, 'left')) {
+          this.editor.handleLeft();
+      } else if (matchKey(evt, 'right')) {
+          this.editor.handleRight();
+      } else if (matchKey(evt, 'up')) {
         this.editor.handleUp();
-        break;
-      case "ArrowDown":
+      } else if (matchKey(evt, 'down')) {
         this.editor.handleDown();
-        break;
-      case " ":
+      } else if (matchKey(evt, 'space')) {
+        this.editor.pauseVideoHtmls();
         this.director.togglePlayPause(this.editor);
-      default:
+      } else if (matchKey(evt, 'backspace')) {
+      } else {
         return;
-    }
+      }
     evt.preventDefault();
   }
 }
 
-function isCmd(evt: KeyboardEvent) {
-  // TODO handle non-Mac
-  return evt.metaKey;
+// TODO handle non-Mac: 
+function isMac() {
+  return true;
+}
+
+// E.g.: cmd+shift+enter or cmd+space
+function matchKey(evt: KeyboardEvent, wantStr = '') {
+  let evtKey = evt.key;
+  // Special cases
+  if (evtKey === ' ') {
+    evtKey = 'space';
+  } else if (evtKey === 'ArrowRight') {
+    evtKey = 'right';
+  } else if (evtKey === 'ArrowUp') {
+    evtKey = 'up';
+  } else if (evtKey === 'ArrowDown') {
+    evtKey = 'down';
+  } else if (evtKey === 'ArrowLeft') {
+    evtKey = 'left';
+  }
+  evtKey = evtKey.toLowerCase();
+
+  const wantProps = wantStr.split('+');
+  if (wantProps.length === 0) {
+    return false;
+  }
+  const wantKey = wantProps.pop()?.toLowerCase();
+  if (evtKey !== wantKey) {
+    return false;
+  }
+
+  const evtProps = new Set<string>();
+  if (evt.metaKey) {
+    evtProps.add(isMac() ? 'cmd' : 'ctrl');
+  }
+  if (evt.altKey) {
+    evtProps.add('alt');
+  }
+  if (evt.shiftKey) {
+    evtProps.add('shift');
+  }
+  if (evt.ctrlKey) {
+    evtProps.add(isMac() ? 'ctrl' : 'cmd');
+  }
+  if (evtProps.size != wantProps.length) {
+    return false;
+  }
+  if (wantProps.some(wantProp => !evtProps.has(wantProp))) {
+    return false;
+  }
+  return true;
 }
 
 customElements.define('editor-ui', EditorUi);

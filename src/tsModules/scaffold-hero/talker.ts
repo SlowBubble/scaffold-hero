@@ -8,13 +8,18 @@ export class Talker {
     private startInfoIdx = -1,
   ) {}
 
-  setup(container: ContainerNode) {
+  setup(container: ContainerNode, startMs = 0) {
     this.startInfoIdx = -1;
+    this.startInfos.forEach((startInfo, idx) => {
+      if (startInfo.startMs < startMs) {
+        this.startInfoIdx = idx;
+      }
+    });
 
     const nodes = container.getNestedNodes();
-    const textNodes: AudioSpeechNode[] = nodes.filter(node => {
+    const textNodes = nodes.filter(node => {
       return node instanceof AudioSpeechNode;
-    });
+    }) as AudioSpeechNode[];
     this.startInfos = computeRecurringStartInfos<AudioSpeechNode>(textNodes);
   }
 

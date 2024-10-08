@@ -25,26 +25,27 @@ export class Director {
     if (editor.cursor.timeMs + this.msPerFrame >= container.commonNodeAttr.endMs) {
       startMs = 0;
     }
-    this.play(container, startMs);
+    this.play(editor, startMs);
   }
 
-  play(container: ContainerNode, startMs = 0) {
+  play(editor: Editor, startMs = 0) {
     if (this.isPlaying) {
       return;
     }
     this.isPlaying = true;
     this.timeMs = startMs;
 
-    this.drawer.setup(container);
-    this.talker.setup(container);
+    const container = editor.getOpenedContainer();
+    this.drawer.setup(container, startMs);
+    this.talker.setup(container, startMs);
 
-    this.animateRecursively(container.commonNodeAttr.endMs);
-    // TODO
+    this.animateRecursively(editor.unpersisted.pathToVideoHtml, container.commonNodeAttr.endMs);
   }
 
   pause() {
     this.isPlaying = false;
     window.clearTimeout(this.animateTimeoutId);
+    window.speechSynthesis.cancel();
     this.onChangeCallback(this.timeMs);
   }
 
@@ -52,11 +53,12 @@ export class Director {
     this.onChangeCallback = callback;
   }
 
-  private animateRecursively(endMs = 10_000) {
+  private animateRecursively(
+      pathToVideoHtml: Map<string, HTMLVideoElement>, endMs = 10_000
+  ) {
     const ctx = this.get2dContext();
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    // Should I have the drawer draw the video image also or a separate videoDrawer?
-    this.drawer.draw(this.timeMs, ctx);
+    this.drawer.draw(this.timeMs, ctx, pathToVideoHtml);
     this.talker.talk(this.timeMs);
 
     // TODO see if we need to disable this avoid jank.
@@ -68,7 +70,7 @@ export class Director {
     }
     this.animateTimeoutId = window.setTimeout(() => {
       this.timeMs = nextTimeMs;
-      this.animateRecursively(endMs);
+      this.animateRecursively(pathToVideoHtml, endMs);
     }, this.msPerFrame);
   }
 

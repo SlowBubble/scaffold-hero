@@ -43,6 +43,22 @@ export class Editor {
     this.unpersisted.onChangeFunc();
   }
 
+  loadPathToVideoHtml() {
+    this.getOpenedContainer().getNestedNodes().forEach(node => {
+      if (node instanceof VideoFileNode) {
+        if (!this.unpersisted.pathToVideoHtml.has(node.filePath)) {
+          this.loadVideoHtmlForNode(node);
+        }
+      }
+    })
+
+  }
+  pauseVideoHtmls() {
+    this.unpersisted.pathToVideoHtml.forEach((videoHtml) => {
+      videoHtml.pause();
+    });
+  }
+
   async handleEnter() {
     const res = prompt("Enter text for Audio Speech.");
     if (res === null) {
@@ -85,13 +101,16 @@ export class Editor {
     node.commonNodeAttr.endMs = this.cursor.timeMs + 2_000;
     this.getOpenedContainer().addNode(node);
     this.notify();
-  
+
+    this.loadVideoHtmlForNode(node);
+  }
+  private loadVideoHtmlForNode(node: VideoFileNode) {
     // editWindowUi would be a better place to have this but
     // we need this loaded here to get the durMs.
     const videoHtml = document.createElement('video');
     videoHtml.id = `video-file-node-video-html-${node.commonNodeAttr.idNum}`;
     videoHtml.src = node.filePath;
-    videoHtml.style.display = 'none';
+    // videoHtml.style.display = 'none';
     document.body.appendChild(videoHtml);
     this.unpersisted.pathToVideoHtml.set(node.filePath, videoHtml);
     videoHtml.onloadedmetadata = () => {

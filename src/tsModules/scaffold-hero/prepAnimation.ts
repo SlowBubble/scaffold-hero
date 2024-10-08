@@ -36,6 +36,8 @@ export function computeRecurringStartInfos<N extends ShNode>(nodes: N[]) {
     startInfo.nodes = nodes.filter(node => {
       return node.commonNodeAttr.startMs <= timeMs && timeMs < node.commonNodeAttr.endMs;
     });
+    startInfo.nodes.sort(
+      (node1, node2) => node1.commonNodeAttr.trackIdx - node2.commonNodeAttr.trackIdx);
   });
   return startInfos;
 }

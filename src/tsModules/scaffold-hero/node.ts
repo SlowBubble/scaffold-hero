@@ -9,7 +9,7 @@ export enum NodeType {
   Container = 'Container',
   AudioSpeech = 'AudioSpeech',
   VisualText = 'VisualText',
-  // VideoFile = 'VideoFile',
+  VideoFile = 'VideoFile',
 }
 
 export function deserializeToNode(json: any) {
@@ -20,9 +20,10 @@ export function deserializeToNode(json: any) {
         return AudioSpeechNode.deserialize(json);
       case NodeType.VisualText:
         return VisualTextNode.deserialize(json);
+      case NodeType.VideoFile:
+        return VideoFileNode.deserialize(json);
     }
     throw 'Forgot to implement deserializeToNode case: ' + json.commonNodeAttr.nodeType;
-
 }
 
 export class CommonNodeAttr {
@@ -117,13 +118,17 @@ constructor(
 
 export class VideoFileNode implements ShNode {
   constructor(
-    public commonNodeAttr: CommonNodeAttr = new CommonNodeAttr(NodeType.VisualText),
+    public commonNodeAttr: CommonNodeAttr = new CommonNodeAttr(NodeType.VideoFile),
     public filePath: string = 'data/matchplay.mov',
+    public startMs = 0,
+    public playbackRate = 1,
   ) {}
   static deserialize(json: any) {
-    return new VisualTextNode(
+    return new VideoFileNode(
       CommonNodeAttr.deserialize(json.commonNodeAttr),
       json.filePath,
+      json.startMs,
+      json.playbackRate,
     );
   }
 }

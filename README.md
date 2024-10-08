@@ -16,9 +16,7 @@
 - Move nodes around
 - Edit nodes
 
-## m4
-- Video File Node
-  - For now, each node will have a hidden video html; we can share if resource is exhausted.
+
 ## m5
 - Create a home page to access it
 
@@ -41,6 +39,10 @@
 
 ## m2
 - X Play it
+
+## m4
+- Video File Node
+  - For now, each node will have a hidden video html; we can share if resource is exhausted.
 
 # More TODO
 ## P1

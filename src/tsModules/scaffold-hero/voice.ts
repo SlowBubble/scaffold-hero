@@ -6,5 +6,4 @@ export function initVoices() {
   }
   voices = window.speechSynthesis.getVoices().filter(
     voice => voice.localService && voice.lang === 'en-AU');
-  console.log(voices);
 }
